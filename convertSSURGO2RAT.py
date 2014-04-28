@@ -158,8 +158,8 @@ for outColName in args.colname:
     
     chorizonCOKEYCol = 169
     chorizonHZNAMECol = 0
-    
-    for i in range(len(mukeyCol)):
+
+    for i in range(mukeyCol.shape[0]):
         mukey = mukeyCol[i]
         if mukey > 0:
             componentFile.seek(0) # Reset position in CSV file
@@ -181,6 +181,7 @@ for outColName in args.colname:
                                 outColH5[i] = chorizon[outColNum]
                             elif chorizon[chorizonHZNAMECol] == 'H6':
                                 outColH6[i] = chorizon[outColNum]
+                    break
     
     rat.writeColumn(outKEAFile, outColName + '_H1', outColH1)
     rat.writeColumn(outKEAFile, outColName + '_H2', outColH2)
