@@ -16,3 +16,6 @@ Example Usage:
 
     python convertSSURGO2RAT.py --indir CA669 --colname claytotal_ --raster --outformat HFA
 
+To list all available columns use:
+
+    python convertSSURGO2RAT.py --printcols
