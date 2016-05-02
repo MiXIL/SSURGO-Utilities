@@ -29,9 +29,11 @@
 import os, sys, csv, glob
 import argparse
 import numpy
-from rios import rat
 import subprocess
-import tempfile as tempfile
+import rsgislib
+from rios import rat
+from rsgislib import rastergis
+from rsgislib import vectorutils
 sys.path.append(os.sys.path[0])
 from ssurgofields import SSURGO_CHorizion
 
@@ -69,7 +71,7 @@ elif args.indir is None or args.colname is None:
     parser.print_help()
     sys.exit()
 
-inDIRName = args.indir
+inDIRName = os.path.abspath(args.indir)
 outColName = sys.argv[2] 
 outXRes = str(args.outRes)
 outYRes = '-' + outXRes
@@ -87,44 +89,32 @@ cHorizonFields = sf.getCHorizonDict()
 
 
 # CREATE RASTER ATTRIBUTE TABLE
-inSpatialDIR = os.path.join(inDIRName,'spatial')
+inSpatialDIR = os.path.join(inDIRName, 'spatial')
 inSHPName = glob.glob(inSpatialDIR + '/*soilmu_a_*.shp')[0]
-inSHPFile = os.path.join(inSpatialDIR,inSHPName)
+inSHPFile = os.path.join(inSpatialDIR, inSHPName)
  
-outKEAFile = inSHPFile.replace('.shp','_raster.' + outExt)
+outKEAFile = inSHPFile.replace('.shp', '_raster.' + outExt)
 
 # Check if KEA file exists or needs creating - assume if it exists it has the attribute table already
 if os.path.exists(outKEAFile) == False: 
     # Rasterize polygon using gdal
     print('Creating raster')
-    rasterizeCommand = 'gdal_rasterize -of ' + outFormat + ' -ot UInt32 -tr ' + outXRes + ' ' + outYRes + ' -a MUKEY ' + inSHPFile + ' ' + outKEAFile
-    subprocess.call(rasterizeCommand, shell=True)
-    
-    print('Converting to RAT')
-    # Convert to RAT using RSGIS
-    outRSGISText = '''<rsgis:commands xmlns:rsgis="http://www.rsgislib.org/xml/">
-        <rsgis:command algor="rastergis" option="popattributestats" clumps="{0}" input="{1}" >
-                <rsgis:band band="1" min="mukey" />
-        </rsgis:command>
-    </rsgis:commands>'''.format(outKEAFile, outKEAFile)
-    
-    # Create temp file for XML
-    (osHandle, outXMLName) = tempfile.mkstemp(suffix='.xml')
-    outXMLFile = open(outXMLName, 'w')
-    outXMLFile.write(outRSGISText)
-    outXMLFile.close()
-    # Run RSGISLib
-    subprocess.call('rsgisexe -x ' + outXMLName , shell=True)
-    print("")
-    # Remove temp file
-    os.remove(outXMLName)
+    rasterizeCommand = ['gdal_rasterize', '-of', outFormat, 
+                        '-ot', 'UInt32',
+                        '-tr', outXRes, outYRes,
+                        '-a', 'MUKEY',
+                        inSHPFile, outKEAFile]
+    subprocess.call(rasterizeCommand)
 
-# Itterat through colum names
+    # Convert to RAT and add entry 'mukey' using RSGISLib
+    rastergis.populateStats(outKEAFile, True, True)
+    stats2Calc = [rastergis.BandAttStats(band=1, minField='mukey')]
+    rastergis.populateRATWithStats(outKEAFile, outKEAFile, stats2Calc)
+
+# Iterate through column names
 for outColName in args.colname:
     # Set up name for standard raster file
-    outRasterImage = inSHPFile.replace('.shp','_raster_' + outColName + '.' + outExt)
-    outRasterImageScript = outRasterImage.replace('soilmu_a','run')
-    outRasterImageScript = outRasterImageScript.replace('.' + outExt,'.xml')
+    outRasterImage = inSHPFile.replace('.shp', '_raster_' + outColName + '.' + outExt)
 
     # Get field from dictionary
     outColNum = cHorizonFields[outColName.strip()]
@@ -132,18 +122,18 @@ for outColName in args.colname:
     # JOIN ATTRIBUTES FROM TEXT FILE
     print('Adding ' + outColName + ' (column ' + str(outColNum) + ') to RAT')
     # Open SSURGO text files
-    componentFileName = os.path.join(inDIRName, 'tabular','comp.txt')
-    chorizonFileName = os.path.join(inDIRName, 'tabular','chorizon.txt')
-    
-    componentFile = open(componentFileName,'rU')
+    componentFileName = os.path.join(inDIRName, 'tabular', 'comp.txt')
+    chorizonFileName = os.path.join(inDIRName, 'tabular', 'chorizon.txt')
+
+    componentFile = open(componentFileName, 'rU')
     chorizonFile = open(chorizonFileName,'rU')
-    
-    componentTxt = csv.reader(componentFile,delimiter='|')
-    chorizonTxt = csv.reader(chorizonFile,delimiter='|')
-    
+
+    componentTxt = csv.reader(componentFile, delimiter='|')
+    chorizonTxt = csv.reader(chorizonFile, delimiter='|')
+
     # Get mukey column from input file
     mukeyCol = rat.readColumn(outKEAFile, 'mukey')
-    
+ 
     # Set up blank columns for output (one for each layer)
     outColH1 = numpy.zeros_like(mukeyCol)
     outColH2 = numpy.zeros_like(mukeyCol) 
@@ -189,24 +179,12 @@ for outColName in args.colname:
     rat.writeColumn(outKEAFile, outColName + '_H4', outColH4)
     rat.writeColumn(outKEAFile, outColName + '_H5', outColH5)
     rat.writeColumn(outKEAFile, outColName + '_H6', outColH6)
-    
-    # Create RSGISLib script to convert to standard raster
-    outRSGISText = '''<rsgis:commands xmlns:rsgis="http://www.rsgislib.org/xml/">
-        <rsgis:command algor="rastergis" option="exportcols2raster" clumps="{0}" output="{1}" format="{2}" datatype="Float32" >
-            <rsgis:field name="{3}_H1" />
-            <rsgis:field name="{3}_H2" />
-            <rsgis:field name="{3}_H3" />
-            <rsgis:field name="{3}_H4" />
-            <rsgis:field name="{3}_H5" />
-            <rsgis:field name="{3}_H6" />
-        </rsgis:command>
-    
-    </rsgis:commands>'''.format(outKEAFile, outRasterImage, outFormat, outColName)
-    
-    outXMLFile = open(outRasterImageScript, 'w')
-    outXMLFile.write(outRSGISText)
-    outXMLFile.close()
 
     if args.raster:
-        subprocess.call('rsgisexe -x ' + outRasterImageScript,shell=True)
-        print("")
+        # Create a list of out column names (attribute and height)
+        outColNamesList = ['{}_H{}'.format(outColName, i) for i in range(1, 7)]
+        rastergis.exportCols2GDALImage(outKEAFile, outRasterImage,
+                                       outFormat, rsgislib.TYPE_32FLOAT,
+                                       outColNamesList)
+        print('Saved raster to: {}'.format(outRasterImage))
+
